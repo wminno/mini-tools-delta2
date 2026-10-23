@@ -24,7 +24,7 @@ def handle(method, path):
     if path == "/9cb22c4190e7c8b6.txt":
         return 200, b"9cb22c4190e7c8b6", "text/plain"
     if path == "/sitemap.xml":
-        x = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://devtools.bigfloppy.net/</loc><changefreq>daily</changefreq></url></urlset>'
+        x = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://minitools.bigfloppy.net/</loc><changefreq>daily</changefreq></url></urlset>'
         return 200, x.encode(), "application/xml"
     if path == "/health":
         return 200, b'{"ok":true}', "application/json"

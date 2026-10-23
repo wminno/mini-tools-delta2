@@ -21,7 +21,7 @@ via threads; trivially safe behind any reverse proxy (Caddy/nginx) or direct.
 |---|---|---|
 | `/health` | – | `{"ok": true}` |
 | `/slug` | `text`, optional `sep` (`-`/`_`) | URL slug |
-| `/ts` | optional `tz` (IANA name) | unix ts, ISO8601 UTC + local |
+|  `/ts` | optional `iso` or `unix` (both directions) | unix ts, ISO8601 UTC + local |
 | `/case` | `text`, `to` = `upper\|lower\|title\|camel\|snake\|kebab` | converted text |
 | `/hash` | `text`, `algo` = sha1\|sha256\|sha512\|md5 | hex digest |
 | `/b64` | `text`, `op` = `encode\|decode` | base64 result |
