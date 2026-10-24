@@ -114,13 +114,13 @@ def handle(method, path):
 
 LOG = os.environ.get("ACCESS_LOG", os.path.join(HERE, "access.log"))
 _loglock = threading.Lock()
-def log_hit(method, target, code):
+def log_hit(method, target, code, ip="-"):
     if target.split("?")[0] == "/health":
         return  # watchdog noise
     try:
         with _loglock:
             with open(LOG, "a") as f:
-                f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {method} {target.split('?')[0]} {code}\n")
+                f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {ip} {target.split('?')[0]} {method} {code}\n")
     except Exception:
         pass
 
@@ -135,8 +135,13 @@ def serve(sock):
                 parts = line.split()
                 method = parts[0] if parts else "GET"
                 target = parts[1] if len(parts) > 1 else "/"
+                ip = "-"
+                for h in req.split("\r\n")[1:]:
+                    if h.lower().startswith("x-forwarded-for:"):
+                        ip = h.split(":", 1)[1].split(",")[0].strip() or "-"
+                        break
                 code, body, ctype = handle(method, target)
-                log_hit(method, target, code)
+                log_hit(method, target, code, ip)
                 reason = {200:"OK",400:"Bad Request",404:"Not Found"}.get(code,"OK")
                 hdr = (f"HTTP/1.1 {code} {reason}\r\nContent-Type: {ctype}\r\n"
                        f"Access-Control-Allow-Origin: *\r\n"
