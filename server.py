@@ -21,6 +21,8 @@ def handle(method, path):
             q[k] = urllib.parse.unquote(v.replace("+", " "))
     if path == "/" or path == "/index.html":
         return 200, open(os.path.join(HERE, "index.html"), "rb").read(), "text/html; charset=utf-8"
+    if path == "/robots.txt":
+        return 200, b"User-agent: *\nAllow: /\nSitemap: https://minitools.bigfloppy.net/sitemap.xml\n", "text/plain"
     if path == "/9cb22c4190e7c8b6.txt":
         return 200, b"9cb22c4190e7c8b6", "text/plain"
     if path == "/sitemap.xml":
