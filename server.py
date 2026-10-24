@@ -112,6 +112,62 @@ def handle(method, path):
 
     return 404, b'{"error":"not found"}', "application/json"
 
+
+# --- MCP server (streamable HTTP, JSON-RPC) at /mcp ---
+TOOLS = [
+ {"name":"slug","description":"Convert text to a clean, URL-safe slug (unicode/accent aware).","inputSchema":{"type":"object","properties":{"text":{"type":"string","description":"Text to slugify"}},"required":["text"]}},
+ {"name":"ts","description":"Convert ISO-8601 timestamp to Unix, or Unix to ISO-8601.","inputSchema":{"type":"object","properties":{"iso":{"type":"string","description":"ISO-8601 timestamp, e.g. 2026-10-20T20:00:00Z"},"unix":{"type":"number","description":"Unix seconds to convert to ISO"}}}},
+ {"name":"case","description":"Convert text to camelCase, snake_case, kebab-case, PascalCase, UPPER, lower or Title.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"to":{"type":"string","enum":["camel","snake","kebab","pascal","upper","lower","title"]}},"required":["text","to"]}},
+ {"name":"hash","description":"MD5 / SHA-1 / SHA-256 / SHA-512 hex digest of a string.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"algo":{"type":"string","enum":["md5","sha1","sha256","sha512"],"default":"sha256"}},"required":["text"]}},
+ {"name":"b64","description":"Base64-encode or decode a string.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"op":{"type":"string","enum":["encode","decode"]}},"required":["text","op"]}},
+ {"name":"uuid","description":"Generate 1-50 random v4 UUIDs.","inputSchema":{"type":"object","properties":{"n":{"type":"integer","minimum":1,"maximum":50,"default":1}}}},
+]
+
+def mcp_call(name, args):
+    qs = urllib.parse.urlencode({k: str(v) for k, v in (args or {}).items()})
+    code, body, _ = handle("GET", "/%s?%s" % (name, qs))
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except Exception:
+        data = {"raw": body.decode("utf-8", "replace")}
+    return code, data
+
+def handle_mcp(method, raw):
+    def J(o):
+        return json.dumps(o).encode("utf-8")
+    if method == "OPTIONS":
+        return 204, b"", "application/json"
+    if method != "POST":
+        return 405, J({"jsonrpc":"2.0","id":None,"error":{"code":-32000,"message":"MCP endpoint requires POST (streamable HTTP JSON-RPC)"}}), "application/json"
+    try:
+        req = json.loads(raw)
+        assert isinstance(req, dict)
+    except Exception:
+        return 400, J({"jsonrpc":"2.0","id":None,"error":{"code":-32700,"message":"Parse error"}}), "application/json"
+    rid = req.get("id")
+    m = req.get("method", "")
+    def reply(res, code=200):
+        return code, J({"jsonrpc":"2.0","id":rid,"result":res}), "application/json"
+    if m == "initialize":
+        return reply({"protocolVersion": (req.get("params") or {}).get("protocolVersion", "2025-03-26"),
+                      "capabilities": {"tools": {}},
+                      "serverInfo": {"name": "minitools", "version": "1.1",
+                                     "description": "Tiny devtools API (slug, timestamps, case, hash, base64, uuid) run by an autonomous AI agent"}})
+    if m.startswith("notifications/"):
+        return 202, b"", "application/json"
+    if m == "tools/list":
+        return reply({"tools": TOOLS})
+    if m == "tools/call":
+        p = req.get("params") or {}
+        name = p.get("name", "")
+        if not any(t["name"] == name for t in TOOLS):
+            return 200, J({"jsonrpc":"2.0","id":rid,"error":{"code":-32602,"message":"Unknown tool: %s" % name}}), "application/json"
+        code, data = mcp_call(name, p.get("arguments") or {})
+        return reply({"content": [{"type": "text", "text": json.dumps(data)}], "isError": code != 200})
+    if m == "ping":
+        return reply({})
+    return 200, J({"jsonrpc":"2.0","id":rid,"error":{"code":-32601,"message":"Method not found: %s" % m}}), "application/json"
+
 LOG = os.environ.get("ACCESS_LOG", os.path.join(HERE, "access.log"))
 _loglock = threading.Lock()
 def log_hit(method, target, code, ip="-"):
@@ -135,17 +191,32 @@ def serve(sock):
                 parts = line.split()
                 method = parts[0] if parts else "GET"
                 target = parts[1] if len(parts) > 1 else "/"
+                # drain full body when Content-Length is set (POST /mcp)
+                hdr, _, bodytxt = req.partition("\r\n\r\n")
+                mcl = re.search(r"content-length:\s*(\d+)", hdr.lower())
+                if mcl:
+                    need = int(mcl.group(1)) - len(bodytxt)
+                    while need > 0:
+                        chunk = c.recv(min(need, 65536)).decode("utf-8", "replace")
+                        if not chunk:
+                            break
+                        bodytxt += chunk
+                        need -= len(chunk)
                 ip = "-"
                 for h in req.split("\r\n")[1:]:
                     if h.lower().startswith("x-forwarded-for:"):
                         ip = h.split(":", 1)[1].split(",")[0].strip() or "-"
                         break
-                code, body, ctype = handle(method, target)
+                if target.split("?")[0] == "/mcp":
+                    code, body, ctype = handle_mcp(method, bodytxt)
+                else:
+                    code, body, ctype = handle(method, target)
                 log_hit(method, target, code, ip)
                 reason = {200:"OK",400:"Bad Request",404:"Not Found"}.get(code,"OK")
+                acao = "Access-Control-Allow-Headers: Content-Type, Accept, MCP-Session-Id\r\n" if target.split("?")[0] == "/mcp" else ""
                 hdr = (f"HTTP/1.1 {code} {reason}\r\nContent-Type: {ctype}\r\n"
                        f"Access-Control-Allow-Origin: *\r\n"
-                       f"Access-Control-Allow-Methods: GET, OPTIONS\r\n"
+                       f"Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n{acao}"
                        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
                 c.sendall(hdr.encode() + body)
             except Exception:
