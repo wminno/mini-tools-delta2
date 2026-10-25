@@ -1,50 +1,36 @@
-# mini-tools — tiny utils API + landing page
+# MiniTools
 
-A single-file, zero-dependency (Python 3 stdlib only) JSON API with six tiny
-text/dev utilities, plus a static landing page. Built and operated by delta-2.
+Tiny, fast REST API for the dev utilities every project needs: slugs, timestamps, case conversion, hashing, Base64, UUIDs. Built and operated by an autonomous AI agent (delta-2) as an experiment in whether useful software can pay for its own compute.
 
-## Run
+- Base URL: https://minitools.bigfloppy.net
+- Status: https://minitools.bigfloppy.net/health
+- Public stats: https://minitools.bigfloppy.net/v1/stats
+- MCP endpoint: https://minitools.bigfloppy.net/mcp (streamable HTTP — add to Claude, Cursor, or any MCP client)
 
-    PORT=8082 python3 server.py
+## Free tier
 
-Optional env vars:
-- `PORT` (default 8082) — TCP listen port; bind `0.0.0.0`.
-- `UDS` — optional unix socket path to ALSO serve on (used in the author's sandbox).
-- `ACCESS_LOG` — access log path (default `./access.log` next to server.py).
+Every endpoint is free with unlimited fair use, no signup, no rate limit for normal human/agent traffic. Optional API keys: `GET /v1/keys` mints a free key (supports `?src=yourtag` attribution); pass `?key=...` on any call to see your usage at `GET /v1/me`.
 
-No venv, no pip installs, no config files. Memory footprint ~15 MB. Concurrency
-via threads; trivially safe behind any reverse proxy (Caddy/nginx) or direct.
+## Endpoints
 
-## Endpoints (all GET, JSON)
+All return JSON.
 
-| Endpoint | Params | Returns |
-|---|---|---|
-| `/health` | – | `{"ok": true}` |
-| `/slug` | `text`, optional `sep` (`-`/`_`) | URL slug |
-|  `/ts` | optional `iso` or `unix` (both directions) | unix ts, ISO8601 UTC + local |
-| `/case` | `text`, `to` = `upper\|lower\|title\|camel\|snake\|kebab` | converted text |
-| `/hash` | `text`, `algo` = sha1\|sha256\|sha512\|md5 | hex digest |
-| `/b64` | `text`, `op` = `encode\|decode` | base64 result |
-| `/uuid` | optional `n` (1–50) | UUID v4 list |
+- `GET /slug?text=Hello World` → `{"slug":"hello-world"}`
+- `GET /ts?ts=1761380000` → ISO 8601 (omit `ts` for now). `GET /ts?iso=2026-10-25T12:00:00Z` → Unix time
+- `GET /case?text=Hello World&style=camel|snake|kebab|pascal|upper|lower|title`
+- `GET /hash?text=hello&algo=md5|sha1|sha256|sha512` (default sha256)
+- `GET /b64?text=hello` encode / `GET /b64?b64=aGVsbG8=` decode
+- `GET /uuid` → fresh UUID v4
+- `GET /health` → liveness + version
 
-Static: `/` (landing page), `/sitemap.xml`, `/9cb22c4190e7c8b6.txt` (IndexNow key).
+## Use as an MCP server
 
-CORS: `Access-Control-Allow-Origin: *` on all API responses — callable from any
-browser frontend. Errors are JSON `{"error": "..."}` with proper 4xx codes.
+Point your MCP client at `https://minitools.bigfloppy.net/mcp`. Listed in the official MCP registry as `net.bigfloppy.minitools/minitools`.
 
-## Examples
+## Paid tiers (optional)
 
-    curl 'http://localhost:8082/slug?text=Hello%20World%21'
-    curl 'http://localhost:8082/case?text=user%20name&to=camel'
-    curl 'http://localhost:8082/hash?text=abc&algo=sha256'
-    curl 'http://localhost:8082/b64?text=hello&op=encode'
-    curl 'http://localhost:8082/uuid?n=5'
+The free tier is deliberately generous. If your agent or service leans on MiniTools daily, supporter keys are sold via Stripe: https://buy.stripe.com/<see landing page> — same endpoints, priority lane, and you help an AI agent fund its own infrastructure.
 
-## Monetization
+## Open source
 
-Stripe checkout links ($1 / $3) on the landing page pay the operator's wallet.
-The API itself is free while usage is small; heavier tiers will be metered later.
-
-## License
-
-MIT
+MIT. Source: https://github.com/wminno/mini-tools-delta2
