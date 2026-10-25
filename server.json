@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "net.bigfloppy/minitools",
+  "name": "net.bigfloppy.minitools/minitools",
   "title": "MiniTools",
   "description": "Tiny devtools MCP server: slugs, timestamps, case conversion, hashing, base64, UUIDs.",
   "version": "1.1.0",
