@@ -6,13 +6,55 @@ from datetime import datetime, timezone
 SOCK = "/tmp/app.sock"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+import secrets
+
+# --- free API keys (usage signal + future paid tiers) ---
+KEYS_FILE = os.environ.get("KEYS_FILE", os.path.join(HERE, "keys.json"))
+_klock = threading.Lock()
+KEYS = {}
+def load_keys():
+    global KEYS
+    try:
+        with open(KEYS_FILE) as f:
+            KEYS = json.load(f)
+    except Exception:
+        KEYS = {}
+def save_keys():
+    tmp = KEYS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(KEYS, f)
+    os.replace(tmp, KEYS_FILE)
+def bump_key(key):
+    with _klock:
+        if key in KEYS:
+            KEYS[key]["calls"] = KEYS[key].get("calls", 0) + 1
+            save_keys()
+load_keys()
+
 def slugify(text):
     text = unicodedata.normalize("NFKD", text or "")
     text = text.encode("ascii", "ignore").decode("ascii").lower()
     text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
     return text[:80] or "slug"
 
+TOOL_PATHS = {"/slug", "/ts", "/case", "/hash", "/b64", "/uuid"}
+
 def handle(method, path):
+    p0, _, qs0 = path.partition("?")
+    key = ""
+    if p0 in TOOL_PATHS:
+        for kv in qs0.split("&"):
+            if kv.startswith("key="):
+                key = urllib.parse.unquote(kv[4:].replace("+", " "))
+                break
+        if key and key not in KEYS:
+            return 401, b'{"error":"unknown API key - mint one free at /v1/keys"}', "application/json"
+    code, body, ctype = _dispatch(method, path)
+    if key and code == 200:
+        bump_key(key)
+    return code, body, ctype
+
+def _dispatch(method, path):
     path, _, qs = path.partition("?")
     q = {}
     for kv in qs.split("&"):
@@ -25,6 +67,10 @@ def handle(method, path):
         return 200, b"User-agent: *\nAllow: /\nSitemap: https://minitools.bigfloppy.net/sitemap.xml\n", "text/plain"
     if path == "/9cb22c4190e7c8b6.txt":
         return 200, b"9cb22c4190e7c8b6", "text/plain"
+    if path == "/.well-known/mcp-registry-auth":
+        return 200, open(os.path.join(HERE, "mcp-registry-auth"), "rb").read(), "text/plain; charset=utf-8"
+    if path == "/.well-known/server.json":
+        return 200, open(os.path.join(HERE, "server.json"), "rb").read(), "application/json"
     if path == "/sitemap.xml":
         x = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://minitools.bigfloppy.net/</loc><changefreq>daily</changefreq></url></urlset>'
         return 200, x.encode(), "application/xml"
@@ -110,6 +156,23 @@ def handle(method, path):
             return 400, b'{"error":"?n= must be an integer"}', "application/json"
         return 200, json.dumps({"uuids": [str(uuid.uuid4()) for _ in range(n)]}).encode(), "application/json"
 
+    if path == "/v1/keys":
+        with _klock:
+            if len(KEYS) > 20000:
+                return 429, b'{"error":"too many keys minted, try later"}', "application/json"
+            email = (q.get("email", "") or "")[:120]
+            key = "mt_" + secrets.token_hex(16)
+            KEYS[key] = {"created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "email": email, "calls": 0}
+            save_keys()
+        out = json.dumps({"key": key, "free_tier": "unlimited fair use", "usage": "pass ?key=" + key + " on any endpoint to track your call count (optional)", "status_url": "/v1/me?key=" + key})
+        return 200, out.encode(), "application/json"
+    if path == "/v1/me":
+        key = q.get("key", "")
+        with _klock:
+            k = KEYS.get(key)
+            if k is None:
+                return 401, b'{"error":"unknown API key"}', "application/json"
+            return 200, json.dumps({"calls": k.get("calls", 0), "created": k.get("created"), "tier": "free"}).encode(), "application/json"
     return 404, b'{"error":"not found"}', "application/json"
 
 
