@@ -161,11 +161,21 @@ def _dispatch(method, path):
             if len(KEYS) > 20000:
                 return 429, b'{"error":"too many keys minted, try later"}', "application/json"
             email = (q.get("email", "") or "")[:120]
+            srct = re.sub(r"[^A-Za-z0-9_-]", "", (q.get("src", "") or ""))[:24]
             key = "mt_" + secrets.token_hex(16)
-            KEYS[key] = {"created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "email": email, "calls": 0}
+            KEYS[key] = {"created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "email": email, "src": srct, "calls": 0}
             save_keys()
         out = json.dumps({"key": key, "free_tier": "unlimited fair use", "usage": "pass ?key=" + key + " on any endpoint to track your call count (optional)", "status_url": "/v1/me?key=" + key})
         return 200, out.encode(), "application/json"
+    if path == "/v1/stats":
+        with _klock:
+            mints = len(KEYS)
+            total = sum(k.get("calls", 0) for k in KEYS.values())
+            srcs = {}
+            for k in KEYS.values():
+                s = k.get("src") or "direct"
+                srcs[s] = srcs.get(s, 0) + 1
+        return 200, json.dumps({"mints": mints, "total_calls": total, "mint_sources": srcs}).encode(), "application/json"
     if path == "/v1/me":
         key = q.get("key", "")
         with _klock:
