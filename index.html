@@ -29,8 +29,8 @@
 
 <div class="card">
   <h3>Free API key</h3>
-  <p>Mint a free key in one request, no signup. It's optional — endpoints work without it — but it gives you a call counter and lets me build the right tools. Pass it as <code>?key=</code> on any endpoint.</p>
-  <p><code>GET /v1/keys</code> → <code>{"key":"mt_…","free_tier":"unlimited fair use"}</code> &nbsp;·&nbsp; check usage: <code>GET /v1/me?key=…</code></p>
+  <p>Tiers: <b>no key</b> = 30 calls/day per IP (start free, no signup) · <b>free key</b> = 500 calls/day, minted in one request · <b>$1 day pass</b> = unlimited for 24h. Pass the key as <code>?key=</code> on any endpoint.</p>
+  <p><code>GET /v1/keys</code> → <code>{"key":"mt_…","free_tier":"500 calls/day per key"}</code> &nbsp;·&nbsp; check usage: <code>GET /v1/me?key=…</code></p>
   <a class="btn" href="/v1/keys">Mint a free key</a>
 </div>
 
@@ -43,7 +43,7 @@
 
 <div class="card">
   <h3>Timestamps, done right</h3>
-  <p>Convert ISO-8601 to Unix and back, with UTC offsets handled. Free tier: 100 calls/day.</p>
+  <p>Convert ISO-8601 to Unix and back, with UTC offsets handled. Free tier: 500 calls/day with a free key, 30/day without one.</p>
   <p><code>GET /ts?iso=2026-10-20T20:00:00Z</code> · <code>GET /ts?unix=1761000000</code></p>
   <a class="btn" href="https://buy.stripe.com/9B600k0q62XS23b8ka8Vi0g">Buy $1 unlimited</a>
 </div>
@@ -57,14 +57,14 @@
 
 <div class="card">
   <h3>Hash generator</h3>
-  <p>MD5, SHA-1, SHA-256, SHA-512 checksums over plain HTTP. Free tier: 100 calls/day.</p>
+  <p>MD5, SHA-1, SHA-256, SHA-512 checksums over plain HTTP. Free tier: 500 calls/day with a free key, 30/day without one.</p>
   <p><code>GET /hash?text=abc&amp;algo=sha256</code> → <code>{"hex":"ba7816..."}</code></p>
   <a class="btn" href="https://buy.stripe.com/9B600k0q62XS23b8ka8Vi0g">Buy $1 unlimited</a>
 </div>
 
 <div class="card">
   <h3>Base64 encode/decode</h3>
-  <p>Encode or decode Base64 strings with one GET. Free tier: 100 calls/day.</p>
+  <p>Encode or decode Base64 strings with one GET. Free tier: 500 calls/day with a free key, 30/day without one.</p>
   <p><code>GET /b64?text=hello&amp;op=encode</code> · <code>GET /b64?text=aGVsbG8=&amp;op=decode</code></p>
   <a class="btn" href="https://buy.stripe.com/9B600k0q62XS23b8ka8Vi0g">Buy $1 unlimited</a>
 </div>
@@ -78,7 +78,7 @@
 
 <div class="card">
   <h3>Use it from your AI agent — MCP server</h3>
-  <p>All six tools are also exposed as an MCP (Model Context Protocol) server at <code>https://minitools.bigfloppy.net/mcp</code> — streamable HTTP JSON-RPC (<code>initialize</code>, <code>tools/list</code>, <code>tools/call</code>). Point any MCP client or coding agent at that URL; the same free tier applies.</p>
+  <p>All six tools are also exposed as an MCP (Model Context Protocol) server at <code>https://minitools.bigfloppy.net/mcp</code> — streamable HTTP JSON-RPC (<code>initialize</code>, <code>tools/list</code>, <code>tools/call</code>). Point any MCP client or coding agent at that URL. The same tiers apply, and there's a <code>get_api_key</code> tool so an agent can mint its own free key (500 calls/day) without leaving MCP.</p>
   <p><code>tools/call slug {"text":"Hello World"}</code> → <code>hello-world</code></p>
 </div>
 

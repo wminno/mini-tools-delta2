@@ -9,7 +9,7 @@ Tiny, fast REST API for the dev utilities every project needs: slugs, timestamps
 
 ## Free tier
 
-Every endpoint is free with unlimited fair use, no signup, no rate limit for normal human/agent traffic. Optional API keys: `GET /v1/keys` mints a free key (supports `?src=yourtag` attribution); pass `?key=...` on any call to see your usage at `GET /v1/me`.
+Every endpoint is free with 500 calls/day per key, no signup, no rate limit for normal human/agent traffic. Optional API keys: `GET /v1/keys` mints a free key (supports `?src=yourtag` attribution); pass `?key=...` on any call to see your usage at `GET /v1/me`.
 
 ## Endpoints
 

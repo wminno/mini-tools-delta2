@@ -28,8 +28,33 @@ def bump_key(key):
     with _klock:
         if key in KEYS:
             KEYS[key]["calls"] = KEYS[key].get("calls", 0) + 1
+            d = KEYS[key].get("day") or {}
+            KEYS[key]["day"] = {"d": _today(), "c": d.get("c", 0) + 1 if d.get("d") == _today() else 1}
             save_keys()
 load_keys()
+
+CLAIMS_FILE = os.environ.get("CLAIMS_FILE", os.path.join(HERE, "claims.json"))
+_clock = threading.Lock()
+CLAIMS = {}
+def load_claims():
+    global CLAIMS
+    try:
+        with open(CLAIMS_FILE) as f:
+            CLAIMS = json.load(f)
+    except Exception:
+        CLAIMS = {}
+def save_claims():
+    tmp = CLAIMS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(CLAIMS, f)
+    os.replace(tmp, CLAIMS_FILE)
+def new_claim():
+    with _clock:
+        code = "pay_" + secrets.token_hex(6)
+        CLAIMS[code] = {"created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "used": False}
+        save_claims()
+    return code
+load_claims()
 
 def slugify(text):
     text = unicodedata.normalize("NFKD", text or "")
@@ -39,7 +64,45 @@ def slugify(text):
 
 TOOL_PATHS = {"/slug", "/ts", "/case", "/hash", "/b64", "/uuid"}
 
-def handle(method, path):
+# --- usage tiers (honest ladder) ---
+# no key: 30 calls/day per client IP | free key: 500/day | paid day-pass: unlimited
+NOKEY_DAILY = 30
+FREE_DAILY = 500
+STRIPE_URL = "https://buy.stripe.com/9B600k0q62XS23b8ka8Vi0g"
+_ipcalls = {}
+_qlock = threading.Lock()
+
+def _today():
+    return time.gmtime().tm_yday
+
+def ip_allow(ip):
+    with _qlock:
+        e = _ipcalls.get(ip)
+        if not e or e[0] != _today():
+            e = _ipcalls[ip] = [_today(), 0]
+        e[1] += 1
+        return e[1] <= NOKEY_DAILY
+
+def key_calls_today(key):
+    k = KEYS.get(key) or {}
+    d = k.get("day") or {}
+    return d.get("c", 0) if d.get("d") == _today() else 0
+
+def key_paid(key):
+    k = KEYS.get(key) or {}
+    return time.time() < k.get("paid_until", 0)
+
+def mint_key(email="", src=""):
+    with _klock:
+        if len(KEYS) > 20000:
+            return None
+        key = "mt_" + secrets.token_hex(16)
+        KEYS[key] = {"created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                     "email": (email or "")[:120], "src": re.sub(r"[^A-Za-z0-9_-]", "", (src or ""))[:24], "calls": 0}
+        save_keys()
+    return key
+
+def handle(method, path, ip="-"):
     p0, _, qs0 = path.partition("?")
     key = ""
     if p0 in TOOL_PATHS:
@@ -49,6 +112,16 @@ def handle(method, path):
                 break
         if key and key not in KEYS:
             return 401, b'{"error":"unknown API key - mint one free at /v1/keys"}', "application/json"
+        if key:
+            if not key_paid(key) and key_calls_today(key) >= FREE_DAILY:
+                return 429, json.dumps({"error": "free tier limit reached (500 calls/day)",
+                                        "upgrade": STRIPE_URL, "note": "paid day-pass keys are unlimited"}).encode(), "application/json"
+        else:
+            if not ip_allow(ip):
+                return 429, json.dumps({"error": "no-key limit reached (30 calls/day per IP)",
+                                        "fix": "mint a free key: GET /v1/keys (500 calls/day)",
+                                        "mcp": "from an MCP client, call the get_api_key tool",
+                                        "upgrade": STRIPE_URL}).encode(), "application/json"
     code, body, ctype = _dispatch(method, path)
     if key and code == 200:
         bump_key(key)
@@ -157,16 +230,28 @@ def _dispatch(method, path):
         return 200, json.dumps({"uuids": [str(uuid.uuid4()) for _ in range(n)]}).encode(), "application/json"
 
     if path == "/v1/keys":
-        with _klock:
-            if len(KEYS) > 20000:
-                return 429, b'{"error":"too many keys minted, try later"}', "application/json"
-            email = (q.get("email", "") or "")[:120]
-            srct = re.sub(r"[^A-Za-z0-9_-]", "", (q.get("src", "") or ""))[:24]
-            key = "mt_" + secrets.token_hex(16)
-            KEYS[key] = {"created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "email": email, "src": srct, "calls": 0}
-            save_keys()
-        out = json.dumps({"key": key, "free_tier": "unlimited fair use", "usage": "pass ?key=" + key + " on any endpoint to track your call count (optional)", "status_url": "/v1/me?key=" + key})
+        key = mint_key(q.get("email", ""), q.get("src", ""))
+        if key is None:
+            return 429, b'{"error":"too many keys minted, try later"}', "application/json"
+        out = json.dumps({"key": key, "free_tier": "500 calls/day per key", "no_key": "30 calls/day per IP",
+                          "usage": "pass ?key=" + key + " on any endpoint", "status_url": "/v1/me?key=" + key,
+                          "upgrade": STRIPE_URL})
         return 200, out.encode(), "application/json"
+    if path == "/v1/claim":
+        ck = (q.get("claim", "") or "").strip()
+        with _klock:
+            c = CLAIMS.get(ck)
+            if not c or c.get("used"):
+                return 404, json.dumps({"error": "unknown or already-used claim code"}).encode(), "application/json"
+            c["used"] = True
+            c["claimed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            save_claims()
+            k = KEYS.get(c.get("key"))
+            if k is not None:
+                k["paid_until"] = time.time() + 86400
+                save_keys()
+        return 200, json.dumps({"ok": True, "key": c.get("key"), "unlimited_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 86400)),
+                          "note": "day-pass active on this key for 24h"}).encode(), "application/json"
     if path == "/v1/stats":
         with _klock:
             mints = len(KEYS)
@@ -178,7 +263,10 @@ def _dispatch(method, path):
         with _anonlock:
             anon = {"total": _anon["calls"],
                     "endpoints": {p: dict(v) for p, v in sorted(_anon["paths"].items())}}
-        return 200, json.dumps({"mints": mints, "total_calls": total, "mint_sources": srcs,
+        with _clock:
+            claims_open = sum(1 for c in CLAIMS.values() if not c.get("used"))
+            claims_used = sum(1 for c in CLAIMS.values() if c.get("used"))
+        return 200, json.dumps({"mints": mints, "total_calls": total, "mint_sources": srcs, "claims_open": claims_open, "claims_used": claims_used,
                                 "anonymous_calls": anon,
                                 "note": "anonymous_calls = raw requests incl. bots/health-adjacent paths; endpoints.calls are all hits, ips are unique client IPs (x-forwarded-for)"}).encode(), "application/json"
     if path == "/v1/me":
@@ -187,7 +275,9 @@ def _dispatch(method, path):
             k = KEYS.get(key)
             if k is None:
                 return 401, b'{"error":"unknown API key"}', "application/json"
-            return 200, json.dumps({"calls": k.get("calls", 0), "created": k.get("created"), "tier": "free"}).encode(), "application/json"
+            return 200, json.dumps({"calls": k.get("calls", 0), "calls_today": key_calls_today(key),
+                                    "created": k.get("created"), "tier": "paid" if key_paid(key) else "free",
+                                    "free_limit": FREE_DAILY, "upgrade": STRIPE_URL}).encode(), "application/json"
     return 404, b'{"error":"not found"}', "application/json"
 
 
@@ -198,6 +288,7 @@ TOOLS = [
  {"name":"case","description":"Convert text to camelCase, snake_case, kebab-case, PascalCase, UPPER, lower or Title.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"to":{"type":"string","enum":["camel","snake","kebab","pascal","upper","lower","title"]}},"required":["text","to"]}},
  {"name":"hash","description":"MD5 / SHA-1 / SHA-256 / SHA-512 hex digest of a string.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"algo":{"type":"string","enum":["md5","sha1","sha256","sha512"],"default":"sha256"}},"required":["text"]}},
  {"name":"b64","description":"Base64-encode or decode a string.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"op":{"type":"string","enum":["encode","decode"]}},"required":["text","op"]}},
+ {"name":"get_api_key","description":"Mint a free API key for this server's HTTP API (500 calls/day, no signup). Optional email for usage stats. Pass the key as ?key= on any HTTP endpoint.","inputSchema":{"type":"object","properties":{"email":{"type":"string","description":"Optional contact email"}}}},
  {"name":"uuid","description":"Generate 1-50 random v4 UUIDs.","inputSchema":{"type":"object","properties":{"n":{"type":"integer","minimum":1,"maximum":50,"default":1}}}},
 ]
 
@@ -210,7 +301,7 @@ def mcp_call(name, args):
         data = {"raw": body.decode("utf-8", "replace")}
     return code, data
 
-def handle_mcp(method, raw):
+def handle_mcp(method, raw, ip="-"):
     def J(o):
         return json.dumps(o).encode("utf-8")
     if method == "OPTIONS":
@@ -240,6 +331,18 @@ def handle_mcp(method, raw):
         name = p.get("name", "")
         if not any(t["name"] == name for t in TOOLS):
             return 200, J({"jsonrpc":"2.0","id":rid,"error":{"code":-32602,"message":"Unknown tool: %s" % name}}), "application/json"
+        if name == "get_api_key":
+            a = p.get("arguments") or {}
+            key = mint_key(a.get("email", ""), src="mcp")
+            if key is None:
+                return reply({"content": [{"type": "text", "text": json.dumps({"error": "too many keys minted, try later"})}], "isError": True})
+            return reply({"content": [{"type": "text", "text": json.dumps({"key": key, "free_tier": "500 calls/day",
+                "usage": "pass ?key=" + key + " on any HTTP endpoint e.g. https://minitools.bigfloppy.net/slug?text=Hi&key=" + key,
+                "status_url": "/v1/me?key=" + key})}]})
+        if not ip_allow(ip):
+            return reply({"content": [{"type": "text", "text": json.dumps({"error": "free limit reached (30 calls/day per client IP without a key)",
+                "fix": "call the get_api_key tool once, then pass ?key=... on HTTP endpoints (500 calls/day)",
+                "upgrade": STRIPE_URL})}], "isError": True})
         code, data = mcp_call(name, p.get("arguments") or {})
         return reply({"content": [{"type": "text", "text": json.dumps(data)}], "isError": code != 200})
     if m == "ping":
@@ -301,9 +404,9 @@ def serve(sock):
                         ip = h.split(":", 1)[1].split(",")[0].strip() or "-"
                         break
                 if target.split("?")[0] == "/mcp":
-                    code, body, ctype = handle_mcp(method, bodytxt)
+                    code, body, ctype = handle_mcp(method, bodytxt, ip)
                 else:
-                    code, body, ctype = handle(method, target)
+                    code, body, ctype = handle(method, target, ip)
                 log_hit(method, target, code, ip)
                 reason = {200:"OK",400:"Bad Request",404:"Not Found"}.get(code,"OK")
                 acao = "Access-Control-Allow-Headers: Content-Type, Accept, MCP-Session-Id\r\n" if target.split("?")[0] == "/mcp" else ""
