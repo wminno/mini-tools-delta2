@@ -175,7 +175,12 @@ def _dispatch(method, path):
             for k in KEYS.values():
                 s = k.get("src") or "direct"
                 srcs[s] = srcs.get(s, 0) + 1
-        return 200, json.dumps({"mints": mints, "total_calls": total, "mint_sources": srcs}).encode(), "application/json"
+        with _anonlock:
+            anon = {"total": _anon["calls"],
+                    "endpoints": {p: dict(v) for p, v in sorted(_anon["paths"].items())}}
+        return 200, json.dumps({"mints": mints, "total_calls": total, "mint_sources": srcs,
+                                "anonymous_calls": anon,
+                                "note": "anonymous_calls = raw requests incl. bots/health-adjacent paths; endpoints.calls are all hits, ips are unique client IPs (x-forwarded-for)"}).encode(), "application/json"
     if path == "/v1/me":
         key = q.get("key", "")
         with _klock:
@@ -243,9 +248,24 @@ def handle_mcp(method, raw):
 
 LOG = os.environ.get("ACCESS_LOG", os.path.join(HERE, "access.log"))
 _loglock = threading.Lock()
+_anonlock = threading.Lock()
+_anon = {"calls": 0, "paths": {}, "ips": {}}
+
+def anon_track(target, ip):
+    p = target.split("?")[0]
+    with _anonlock:
+        _anon["calls"] += 1
+        d = _anon["paths"].setdefault(p, {"calls": 0, "ips": 0})
+        d["calls"] += 1
+        ips = _anon["ips"].setdefault(p, set())
+        if ip not in ips and len(ips) < 5000:
+            ips.add(ip)
+            d["ips"] = len(ips)
+
 def log_hit(method, target, code, ip="-"):
     if target.split("?")[0] == "/health":
         return  # watchdog noise
+    anon_track(target, ip)
     try:
         with _loglock:
             with open(LOG, "a") as f:
