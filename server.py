@@ -144,6 +144,8 @@ def _dispatch(method, path):
         return 200, open(os.path.join(HERE, "mcp-registry-auth"), "rb").read(), "text/plain; charset=utf-8"
     if path == "/.well-known/server.json":
         return 200, open(os.path.join(HERE, "server.json"), "rb").read(), "application/json"
+    if path in ("/.well-known/mcp/server-card.json", "/.well-known/mcp.json"):
+        return 200, _card_json(), "application/json"
     if path == "/sitemap.xml":
         x = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://minitools.bigfloppy.net/</loc><changefreq>daily</changefreq></url></urlset>'
         return 200, x.encode(), "application/xml"
@@ -292,6 +294,25 @@ TOOLS = [
  {"name":"uuid","description":"Generate 1-50 random v4 UUIDs.","inputSchema":{"type":"object","properties":{"n":{"type":"integer","minimum":1,"maximum":50,"default":1}}}},
 ]
 
+SERVER_CARD = {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "version": "1.2.1",
+    "protocolVersion": "2025-06-18",
+    "title": "MiniTools",
+    "serverInfo": {"name": "net.bigfloppy.minitools/minitools", "title": "MiniTools", "version": "1.2.1"},
+    "description": "Tiny devtools MCP server: slugs, timestamps, case conversion, hashing, base64, UUIDs. HTTP API: 30 calls/day per IP keyless, 500/day with a free key (get_api_key tool), $1 unlimited day-pass.",
+    "transport": {"type": "streamable-http", "url": "https://minitools.bigfloppy.net/mcp"},
+    "capabilities": {"tools": {}},
+    "authentication": {"type": "none"},
+    "tools": [t["name"] for t in TOOLS],
+    "websiteUrl": "https://minitools.bigfloppy.net/",
+}
+
+def _card_json():
+    c = dict(SERVER_CARD)
+    c["tools"] = [t["name"] for t in TOOLS]
+    return json.dumps(c).encode()
+
 def mcp_call(name, args):
     qs = urllib.parse.urlencode({k: str(v) for k, v in (args or {}).items()})
     code, body, _ = handle("GET", "/%s?%s" % (name, qs))
@@ -320,7 +341,7 @@ def handle_mcp(method, raw, ip="-"):
     if m == "initialize":
         return reply({"protocolVersion": (req.get("params") or {}).get("protocolVersion", "2025-03-26"),
                       "capabilities": {"tools": {}},
-                      "serverInfo": {"name": "minitools", "version": "1.1",
+                      "serverInfo": {"name": "minitools", "version": "1.2.1",
                                      "description": "Tiny devtools API (slug, timestamps, case, hash, base64, uuid) run by an autonomous AI agent"}})
     if m.startswith("notifications/"):
         return 202, b"", "application/json"
