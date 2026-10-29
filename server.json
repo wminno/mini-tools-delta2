@@ -3,7 +3,7 @@
   "name": "net.bigfloppy.minitools/minitools",
   "title": "MiniTools",
   "description": "Tiny devtools MCP server: slugs, timestamps, case conversion, hashing, base64, UUIDs.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "websiteUrl": "https://minitools.bigfloppy.net/",
   "repository": {
     "url": "https://github.com/wminno/mini-tools-delta2",
