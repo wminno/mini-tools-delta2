@@ -56,6 +56,17 @@ def new_claim():
     return code
 load_claims()
 
+def ensure_claim_pool():
+    # keep a pool of unredeemed day-pass claim codes ready, so the $1 rung
+    # (Stripe link -> buyer gets code -> /v1/claim) is always fulfilable.
+    with _clock:
+        need = 3 - sum(1 for c in CLAIMS.values() if not c.get("used"))
+        if need > 0:
+            for _ in range(need):
+                code = "pay_" + secrets.token_hex(6)
+                CLAIMS[code] = {"created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "used": False}
+            save_claims()
+
 def slugify(text):
     text = unicodedata.normalize("NFKD", text or "")
     text = text.encode("ascii", "ignore").decode("ascii").lower()
@@ -240,6 +251,7 @@ def _dispatch(method, path):
                           "upgrade": STRIPE_URL})
         return 200, out.encode(), "application/json"
     if path == "/v1/claim":
+        ensure_claim_pool()
         ck = (q.get("claim", "") or "").strip()
         with _klock:
             c = CLAIMS.get(ck)
@@ -252,7 +264,23 @@ def _dispatch(method, path):
             if k is not None:
                 k["paid_until"] = time.time() + 86400
                 save_keys()
-        return 200, json.dumps({"ok": True, "key": c.get("key"), "unlimited_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 86400)),
+                out_key = c.get("key")
+            else:
+                # pool claim with no bound key: mint a fresh paid key inline
+                # (never call mint_key here — it re-locks _klock and deadlocks)
+                if len(KEYS) > 20000:
+                    out_key = None
+                else:
+                    out_key = "mt_" + secrets.token_hex(16)
+                    KEYS[out_key] = {"created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                     "email": "", "src": "daypass", "calls": 0,
+                                     "paid_until": time.time() + 86400}
+                    save_keys()
+                    c["key"] = out_key
+                    save_claims()
+        if out_key is None:
+            return 500, json.dumps({"error": "key minting temporarily unavailable"}).encode(), "application/json"
+        return 200, json.dumps({"ok": True, "key": out_key, "unlimited_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 86400)),
                           "note": "day-pass active on this key for 24h"}).encode(), "application/json"
     if path == "/v1/stats":
         with _klock:
@@ -296,10 +324,10 @@ TOOLS = [
 
 SERVER_CARD = {
     "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "protocolVersion": "2025-06-18",
     "title": "MiniTools",
-    "serverInfo": {"name": "net.bigfloppy.minitools/minitools", "title": "MiniTools", "version": "1.2.1"},
+    "serverInfo": {"name": "net.bigfloppy.minitools/minitools", "title": "MiniTools", "version": "1.2.2"},
     "description": "Tiny devtools MCP server: slugs, timestamps, case conversion, hashing, base64, UUIDs. HTTP API: 30 calls/day per IP keyless, 500/day with a free key (get_api_key tool), $1 unlimited day-pass.",
     "transport": {"type": "streamable-http", "url": "https://minitools.bigfloppy.net/mcp"},
     "capabilities": {"tools": {}},
@@ -341,7 +369,7 @@ def handle_mcp(method, raw, ip="-"):
     if m == "initialize":
         return reply({"protocolVersion": (req.get("params") or {}).get("protocolVersion", "2025-03-26"),
                       "capabilities": {"tools": {}},
-                      "serverInfo": {"name": "minitools", "version": "1.2.1",
+                      "serverInfo": {"name": "minitools", "version": "1.2.2",
                                      "description": "Tiny devtools API (slug, timestamps, case, hash, base64, uuid) run by an autonomous AI agent"}})
     if m.startswith("notifications/"):
         return 202, b"", "application/json"
@@ -455,4 +483,5 @@ def main():
     serve(t)
 
 if __name__ == "__main__":
+    ensure_claim_pool()
     main()
